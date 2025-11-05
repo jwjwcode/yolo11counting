@@ -5,80 +5,18 @@ import numpy as np
 import argparse
 import cv2
 from ultralytics import YOLO
-import PySpin
+
 import sys
 import time
 
 import asyncio
 
 
-def Prepare_camera(cam):
 	
-	print('cam list', len(cam_list))
-	processor = PySpin.ImageProcessor()
-	processor.SetColorProcessing(PySpin.SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR)
-	
-        # Retrieve TL device nodemap and print device information
-	nodemap_tldevice = cam.GetTLDeviceNodeMap()
-        # Initialize camera
-	cam.Init()
-        # Retrieve GenICam nodemap
-	nodemap = cam.GetNodeMap()
-	node_acquisition_mode = PySpin.CEnumerationPtr(nodemap.GetNode('AcquisitionMode'))
-	if not PySpin.IsReadable(node_acquisition_mode) or not PySpin.IsWritable(node_acquisition_mode):
-		print('Unable to set acquisition mode to continuous (enum retrieval). Aborting...')
-        # Retrieve entry node from enumeration node
-	node_acquisition_mode_continuous = node_acquisition_mode.GetEntryByName('Continuous')
-	if not PySpin.IsReadable(node_acquisition_mode_continuous):
-		print('Unable to set acquisition mode to continuous (entry retrieval). Aborting...')
-        # Retrieve integer value from entry node
-	acquisition_mode_continuous = node_acquisition_mode_continuous.GetValue()
-        # Set integer value from entry node as new value of enumeration node
-	node_acquisition_mode.SetIntValue(acquisition_mode_continuous)
-	print('Acquisition mode set to continuous...')
-	
-	# Retrieve Stream Parameters device nodemap
-	s_node_map = cam.GetTLStreamNodeMap()
-	# Retrieve Buffer Handling Mode Information
-	handling_mode = PySpin.CEnumerationPtr(s_node_map.GetNode('StreamBufferHandlingMode'))
-	if not PySpin.IsReadable(handling_mode) or not PySpin.IsWritable(handling_mode):
-		print('Unable to set Buffer Handling mode (node retrieval). Aborting...\n')
-		return False
-
-	handling_mode_entry = PySpin.CEnumEntryPtr(handling_mode.GetCurrentEntry())
-	if not PySpin.IsReadable(handling_mode_entry):
-		print('Unable to set Buffer Handling mode (Entry retrieval). Aborting...\n')
-		return False            
-	print('\nDefault Buffer Handling Mode: %s' % handling_mode_entry.GetDisplayName())
-        
-        #set the buffer handling mode
-	handling_mode_entry = handling_mode.GetEntryByName('NewestOnly')
-	handling_mode.SetIntValue(handling_mode_entry.GetValue())
-	print('\n\nBuffer Handling Mode has been set to %s' % handling_mode_entry.GetDisplayName())
-	#start acquisition	
-	cam.BeginAcquisition()
-	device_serial_number = ''
-	node_device_serial_number = PySpin.CStringPtr(nodemap_tldevice.GetNode('DeviceSerialNumber'))
-	if PySpin.IsReadable(node_device_serial_number):
-		device_serial_number = node_device_serial_number.GetValue()
-		print('Device serial number retrieved as %s...' % device_serial_number)
-	processor = PySpin.ImageProcessor()
-
-        # Set default image processor color processing method
-        #
-        # *** NOTES ***
-        # By default, if no specific color processing algorithm is set, the image
-        # processor will default to NEAREST_NEIGHBOR method.
-	processor.SetColorProcessing(PySpin.SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR)
-	node_acquisition_framerate = PySpin.CFloatPtr(nodemap.GetNode('AcquisitionFrameRate'))
-	framerate_to_set = node_acquisition_framerate.GetValue()
-	print('Frame rate to be set to %d...' % framerate_to_set)
-	
-	return cam, processor, framerate_to_set	
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
-ap.add_argument("--modelpath", default = '/home/orin/ultralytics_old/runs/detect/egg3/weights/best.engine',#rotifer_n_320
+ap.add_argument("--modelpath", default = 'best.pt',#rotifer_n_320
 	help="path to detection model")
 ap.add_argument("--input", type=str, default = "/home/orin/datasets/speed1live2.mp4",
 	help="path to optional input video file")
@@ -95,10 +33,7 @@ print("[INFO] loading model...")
 predictor = YOLO(args['modelpath'])
 
 NUM_IMGS = 100000000
-system = PySpin.System.GetInstance()
-cam_list = system.GetCameras()
-cam = cam_list[0]
-cam, processor, framerate_to_set = Prepare_camera(cam)
+cap = cv2.VideoCapture(0)
 	
 # initialize the frame dimensions 
 W = 720
@@ -116,9 +51,7 @@ Total = 0
 tic = time.time()
 # loop over frames from the video stream
 for i in range(NUM_IMGS):
-	image_result = cam.GetNextImage(100)
-	frame = processor.Convert(image_result, PySpin.PixelFormat_BGR8)
-	frame = frame.GetNDArray()#convert pointer to numpy array
+	ret, frame = cap.read()
 	results = predictor.track(source=frame,tracker='custom_tracker.yaml', persist=True, conf=0.5001, iou=0.5, imgsz=I_SZ,agnostic_nms=True)
 	boxes, labels, probs, objectIDs = results[0].boxes.xyxy, results[0].boxes.cls, results[0].boxes.conf, results[0].boxes.id	
 	cv2.line(frame, (int(W*0.8),0), (int(W*0.8), H), (0, 255, 255), 2)
@@ -184,7 +117,6 @@ for i in range(NUM_IMGS):
 	key = cv2.waitKey(1) & 0xFF   
 	if key == ord("q"):
 		break
-	image_result.Release()
 	del frame
 	Total += 1
 		
@@ -195,11 +127,7 @@ fps = Total / total_time
 print('time {}, fps {}'.format(total_time, fps))
 #writer.release()	
 # if we are not using a video file, stop the camera video stream
-cam.EndAcquisition()	
-cam.DeInit()
-del cam
-cam_list.Clear()
-system.ReleaseInstance()
+
 # close any open windows
 cv2.destroyAllWindows()
 		
